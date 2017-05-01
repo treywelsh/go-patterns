@@ -4,42 +4,54 @@ Fan-Out is a messaging pattern used for distributing work amongst workers (produ
 
 We can model fan-out using the Go channels.
 
+## Implementation
+
 ```go
 // Split a channel into n channels that receive messages in a round-robin fashion.
-func Split(ch <-chan int, n int) []<-chan int {
-	cs := make([]chan int)
-	for i := 0; i < n; i++ {
-		cs = append(cs, make(chan int))
+func fanOut(in <-chan time.Time, buflen int, count int) []<-chan time.Time {
+	out := make([]chan time.Time, count)
+	outRead := make([]<-chan time.Time, count) //Can't return out as []<-chan time.Time
+
+	for i := range out {
+		out[i] = make(chan time.Time, buflen)
+		outRead[i] = out[i]
 	}
 
-	// Distributes the work in a round robin fashion among the stated number
-	// of channels until the main channel has been closed. In that case, close
-	// all channels and return.
-	distributeToChannels := func(ch <-chan int, cs []chan<- int) {
-		// Close every channel when the execution ends.
-		defer func(cs []chan<- int) {
-			for _, c := range cs {
-				close(c)
+	spread := func(in <-chan time.Time) {
+		for v := range in {
+			for _, ch := range out {
+				ch <- v
 			}
-		}(cs)
-
-		for {
-			for _, c := range cs {
-				select {
-				case val, ok := <-ch:
-					if !ok {
-						return
-					}
-
-					c <- val
-				}
-			}
+		}
+        
+        //When in closed, all output chans are closed
+		for _, ch := range out {
+			close(ch)
 		}
 	}
 
-	go distributeToChannels(ch, cs)
+	go spread(in)
 
-	return cs
+	return outRead
+}
+```
+## Usage
+
+```go
+func main() {
+	timer := time.NewTicker(2 * time.Millisecond)
+
+	chans := fanOut(timer.C, 5, 10)
+	for i, c := range chans {
+		go func(i int, c <-chan time.Time) {
+			for v := range c {
+				fmt.Println("ch", i, "time", v)
+			}
+		}(i, c)
+	}
+	fmt.Println("Wait and close")
+	time.Sleep(2 * time.Second)
+	timer.Stop()
 }
 ```
 
